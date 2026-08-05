@@ -2602,7 +2602,7 @@ async function executarImport(novos){
   const barra=$("#imp_barra"), prog=$("#imp_prog");
   barra.classList.remove("hidden"); prog.classList.remove("hidden");
   const lote="planilha "+new Date().toLocaleString('pt-BR');
-  let feitos=0, falhas=0;
+  let feitos=0, falhas=0, manifOk=0, manifFalhas=0, ultimoErroManif="";
 
   // 1) coordenadas (para o mapa de calor)
   if($("#imp_geo").checked){
@@ -2643,7 +2643,24 @@ async function executarImport(novos){
           resposta_lai:m.resposta_lai,lai_motivo:m.lai_motivo,motivo_parcial_lai:m.motivo_parcial_lai,
           area:m.area,subarea:m.subarea,ods:m.ods}));
       });
-      if(manifs.length)await sb.from("manifestacoes").insert(manifs);
+      if(manifs.length){
+        // 1ª tentativa: com todos os campos (inclui LAI, se o banco tiver as colunas)
+        let r=await sb.from("manifestacoes").insert(manifs);
+        if(r.error){
+          // 2ª tentativa: só colunas básicas (caso o banco não tenha os campos LAI)
+          const basicas=manifs.map(m=>({processo_id:m.processo_id,sequencia:m.sequencia,
+            orgao:m.orgao,descricao:m.descricao,tipo:m.tipo,area:m.area,subarea:m.subarea,ods:m.ods}));
+          r=await sb.from("manifestacoes").insert(basicas);
+          if(r.error){
+            // 3ª tentativa: mínimo absoluto (colunas originais da tabela)
+            const min=manifs.map(m=>({processo_id:m.processo_id,sequencia:m.sequencia,
+              orgao:m.orgao,descricao:m.descricao,area:m.area,subarea:m.subarea}));
+            r=await sb.from("manifestacoes").insert(min);
+          }
+        }
+        if(r.error){ manifFalhas+=manifs.length; ultimoErroManif=r.error.message; }
+        else manifOk+=manifs.length;
+      }
       feitos+=bloco.length;
     }
     const pc=30+Math.round(Math.min(70,(i+passo)/novos.length*70));
@@ -2653,7 +2670,8 @@ async function executarImport(novos){
 
   invalidarCache();
   barra.querySelector("i").style.width="100%";
-  prog.innerHTML=`<b>Concluído.</b> ${feitos} processo(s) importado(s)${falhas?`, ${falhas} com falha`:""}.<br>
+  prog.innerHTML=`<b>Concluído.</b> ${feitos} processo(s) e ${manifOk} manifestaç${manifOk===1?'ão':'ões'} importad${manifOk===1?'a':'as'}${falhas?`, ${falhas} processo(s) com falha`:""}.<br>
+    ${manifFalhas?`<span style="color:#c02a1f">Atenção: ${manifFalhas} manifestação(ões) não foram gravadas. Rode o script <b>lai_manifestacao.sql</b> no Supabase e reimporte este lote. Detalhe: ${esc(ultimoErroManif)}</span><br>`:""}
     Lote: <code>${esc(lote)}</code> — guarde esta identificação caso precise desfazer a carga.`;
   btn.textContent="Fechar"; btn.disabled=false;
   btn.onclick=()=>{modalRoot.innerHTML="";go("processos");};
