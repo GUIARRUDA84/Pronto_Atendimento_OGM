@@ -5,7 +5,7 @@ const API = window.API_URL;
 const MESES = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 const VERDE = '#0B5D3B', VERDES = ['#0B5D3B', '#1E9E62', '#4FBF8B', '#8ED9B4', '#C79A2B', '#E0C879', '#6B8F80', '#A9C4B8', '#2F6E52', '#D9E7E0'];
 
-const estado = { tax: {}, orgaos: [], par: {}, dados: [], filtrados: [], editando: null, graficos: {} };
+const estado = { tax: {}, orgaos: [], par: {}, dados: [], filtrados: [], editando: null, graficos: {}, baseCarregada: false };
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
@@ -97,19 +97,36 @@ async function iniciar() {
     const s = localStorage.getItem('pa_servidor');
     if (s) $('#servidorSessao').value = s;
 
-    await carregarDados();
+    // Abertura leve: só os últimos registros. A base inteira é buscada
+    // sob demanda, ao entrar em Consultar ou Painel.
+    const ult = await apiGet('ultimos&n=15');
+    desenharUltimos(ult);
+    $('#rodapeInfo').textContent = 'Pronto. Abra Consultar ou Painel para carregar a base completa.';
   } catch (err) {
     toast('Falha ao conectar na base: ' + err.message, true);
   }
 }
 
-async function carregarDados() {
+// Busca a base completa uma única vez e guarda em cache.
+async function garantirBase() {
+  if (estado.baseCarregada) return;
+  $('#rodapeInfo').textContent = 'Carregando base completa…';
   estado.dados = await apiGet('listar');
   estado.filtrados = estado.dados.slice();
-  desenharUltimos();
-  aplicarFiltros();
+  estado.baseCarregada = true;
   prepararPainel();
   $('#rodapeInfo').textContent = `${estado.dados.length} registros na base · atualizado em ${new Date().toLocaleString('pt-BR')}`;
+}
+
+async function carregarDados() {
+  // Após gravar/editar/excluir: atualiza os últimos e marca a base para recarregar.
+  const ult = await apiGet('ultimos&n=15');
+  desenharUltimos(ult);
+  estado.baseCarregada = false;
+  if ($('#consultar').classList.contains('ativa') || $('#painel').classList.contains('ativa')) {
+    await garantirBase();
+    aplicarFiltros();
+  }
 }
 
 /* ------------------------------------------------------------- cascata --- */
@@ -185,8 +202,8 @@ function limpar(mantemData) {
   status('#statusReg', '');
 }
 
-function desenharUltimos() {
-  const ult = estado.dados.slice(-8).reverse();
+function desenharUltimos(lista) {
+  const ult = (lista || estado.dados).slice(-8).reverse();
   $('#ultimos').innerHTML = ult.length
     ? ult.map((r) => `<div class="item"><span><b>${esc(r.DATA)}</b> · ${esc(r.ORGAO)} — ${esc(r.ASSUNTO)}</span>
         <span class="tag">${esc(r.SERVIDOR)}</span></div>`).join('')
@@ -384,11 +401,27 @@ async function carregarAdmin() {
   }
 }
 
+// Recarrega apenas as listas (bootstrap), sem baixar a base de atendimentos.
+async function recarregarListas() {
+  const b = await apiGet('bootstrap');
+  estado.tax = b.taxonomia; estado.orgaos = b.orgaos; estado.par = b.parametros;
+  preencher('#servidorSessao', b.parametros.SERVIDOR, 'Selecione…');
+  preencher('#fForma', b.parametros.FORMA_RECEBIMENTO, 'Selecione…');
+  preencher('#fDesfecho', b.parametros.DESFECHO, 'Selecione…');
+  preencher('#fOrgao', b.orgaos, 'Selecione…');
+  preencher('#cOrgao', b.orgaos, 'Todos');
+  preencher('#pOrgao', b.orgaos, 'Todos');
+  preencher('#cServidor', b.parametros.SERVIDOR, 'Todos');
+  preencher('#cForma', b.parametros.FORMA_RECEBIMENTO, 'Todas');
+  $('#listaOrgaos').innerHTML = b.orgaos.map((o) => `<option value="${esc(o)}">`).join('');
+}
+
 /* ----------------------------------------------------------- navegação --- */
-function irPara(alvo) {
+async function irPara(alvo) {
   $$('.aba').forEach((b) => b.classList.toggle('ativa', b.dataset.alvo === alvo));
   $$('.tela').forEach((s) => s.classList.toggle('ativa', s.id === alvo));
-  if (alvo === 'painel') desenharPainel();
+  if (alvo === 'consultar') { await garantirBase(); aplicarFiltros(); }
+  if (alvo === 'painel')    { await garantirBase(); desenharPainel(); }
   if (alvo === 'admin' && !$('#tabTax tbody').children.length) carregarAdmin();
 }
 
@@ -419,7 +452,7 @@ $('#btnTaxAdd').addEventListener('click', async () => {
     $('#aAssunto').value = '';
     toast('Assunto incluído.');
     await carregarAdmin();
-    await iniciar();
+    await recarregarListas();
   } catch (err) { status('#statusAdmin', err.message, 'erro'); }
 });
 
@@ -431,7 +464,7 @@ $('#btnParAdd').addEventListener('click', async () => {
     $('#aValor').value = '';
     toast('Valor incluído.');
     await carregarAdmin();
-    await iniciar();
+    await recarregarListas();
   } catch (err) { status('#statusAdmin', err.message, 'erro'); }
 });
 
@@ -442,7 +475,7 @@ $('#tabTax').addEventListener('click', async (e) => {
   try {
     await apiPost('tax_alternar', { ORGAO, ASSUNTO, USUARIO: $('#servidorSessao').value });
     await carregarAdmin();
-    await iniciar();
+    await recarregarListas();
   } catch (err) { toast(err.message, true); }
 });
 
@@ -453,7 +486,7 @@ $('#tabPar').addEventListener('click', async (e) => {
   try {
     await apiPost('par_alternar', { TIPO, VALOR, USUARIO: $('#servidorSessao').value });
     await carregarAdmin();
-    await iniciar();
+    await recarregarListas();
   } catch (err) { toast(err.message, true); }
 });
 
