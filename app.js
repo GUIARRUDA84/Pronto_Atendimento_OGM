@@ -57,7 +57,11 @@ async function apiGet(acao) {
 async function apiPost(acao, dados) {
   const chave = $('#chaveSessao').value.trim();
   if (!chave) throw new Error('Informe a chave de acesso no topo da tela.');
-  const r = await fetch(API, { method: 'POST', body: JSON.stringify({ acao, chave, dados }) });
+  const r = await fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ acao, chave, dados })
+  });
   const j = await r.json();
   if (!j.ok) throw new Error(j.erro);
   return j.data;
